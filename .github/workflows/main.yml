@@ -1,0 +1,113 @@
+```yaml
+name: Find Me - CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+
+  # ==========================================
+  # CI - Quality, Test and Build
+  # ==========================================
+  ci:
+    name: CI - Check, Test & Build
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # 1. Checkout source code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # 3. Install dependencies
+      - name: Install dependencies
+        run: npm ci
+
+      # 4. TypeScript validation
+      - name: Type check
+        run: npm run typecheck
+
+      # 5. ESLint
+      - name: Lint
+        run: npm run lint
+
+      # 6. Unit tests
+      - name: Run tests
+        run: npm test -- --run
+
+      # 7. Build React application
+      - name: Build application
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      # 8. Upload build artifact
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: find-me-dist
+          path: dist/
+
+
+  # ==========================================
+  # CD - Production Deployment
+  # ==========================================
+  deploy:
+    name: CD - Deploy Production
+    needs: ci
+
+    # Deploy only when code is pushed to main
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: production
+
+    steps:
+
+      # 1. Download build artifact
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: find-me-dist
+          path: dist/
+
+      # 2. Deployment placeholder
+      - name: Deploy application
+        run: |
+          echo "======================================"
+          echo "Deploying Find Me application"
+          echo "======================================"
+          echo "Build files:"
+          ls -la dist/
+
+          # Add your hosting provider deployment command here.
+          #
+          # Example:
+          # npm run deploy
+          #
+          # Or AWS:
+          # aws s3 sync dist/ s3://YOUR-BUCKET --delete
+
+      # 3. Deployment completed
+      - name: Deployment successful
+        run: |
+          echo "Find Me deployed successfully!"
+```
