@@ -1,4 +1,4 @@
-```yaml
+
 name: Find Me - CI/CD
 
 on:
@@ -110,4 +110,4 @@ jobs:
       - name: Deployment successful
         run: |
           echo "Find Me deployed successfully!"
-```
+
