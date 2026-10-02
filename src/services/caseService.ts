@@ -48,14 +48,16 @@ export async function createCase(
   });
 
   const { _id, ...result } = caseDoc;
+  void _id;
   return { case: result as Case, error: null };
 }
 
 export async function getCaseById(id: string): Promise<Case | null> {
   const doc = await mongo.findOne<CaseDoc>('cases', { _id: id });
   if (!doc) return null;
-  const { _id, ...c } = doc;
-  return c as Case;
+  const { _id, ...result } = doc;
+  void _id;
+  return result as Case;
 }
 
 export async function getCasePhotos(caseId: string): Promise<CasePhoto[]> {
@@ -63,7 +65,11 @@ export async function getCasePhotos(caseId: string): Promise<CasePhoto[]> {
   return docs
     .filter((d) => !d.deleted_at)
     .sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0))
-    .map((d) => { const { _id, ...p } = d; return p as CasePhoto; });
+    .map((d) => {
+      const { _id, ...photo } = d;
+      void _id;
+      return photo as CasePhoto;
+    });
 }
 
 export async function getCaseLocations(caseId: string): Promise<CaseLocation[]> {
@@ -71,7 +77,11 @@ export async function getCaseLocations(caseId: string): Promise<CaseLocation[]> 
   return docs
     .filter((d) => d.location_type !== 'EXACT_INTERNAL')
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .map((d) => { const { _id, ...l } = d; return l as CaseLocation; });
+    .map((d) => {
+      const { _id, ...location } = d;
+      void _id;
+      return location as CaseLocation;
+    });
 }
 
 export async function getPhotoUrl(storageKey: string): Promise<string | null> {
@@ -108,7 +118,25 @@ export async function findNearbyCases(
     if (!loc) continue;
     const dist = haversineKm(lat, lng, loc.latitude, loc.longitude);
     if (dist > radiusKm) continue;
-    const { _id, created_by, location_visibility, updated_at, closed_at, police_reference, additional_info, is_child, ...rest } = c;
+    const {
+      _id,
+      created_by,
+      location_visibility,
+      updated_at,
+      closed_at,
+      police_reference,
+      additional_info,
+      is_child,
+      ...rest
+    } = c;
+    void _id;
+    void created_by;
+    void location_visibility;
+    void updated_at;
+    void closed_at;
+    void police_reference;
+    void additional_info;
+    void is_child;
     results.push({
       ...rest,
       is_child: c.is_child,
@@ -126,7 +154,11 @@ export async function getMyCases(): Promise<Case[]> {
   const docs = await mongo.findMany<CaseDoc>('cases', { created_by: userId });
   return docs
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .map((d) => { const { _id, ...c } = d; return c as Case; });
+    .map((d) => {
+      const { _id, ...caseData } = d;
+      void _id;
+      return caseData as Case;
+    });
 }
 
 export async function updateCaseStatus(

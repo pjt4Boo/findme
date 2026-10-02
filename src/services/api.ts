@@ -12,7 +12,8 @@ type ProfileDoc = DocType & Profile;
 type CaseDoc = DocType & Case;
 
 function strip<T extends DocType>(doc: T): Omit<T, '_id'> {
-  const { _id, ...rest } = doc;
+  const rest: Record<string, unknown> = { ...doc };
+  delete rest._id;
   return rest as Omit<T, '_id'>;
 }
 
@@ -132,10 +133,13 @@ export async function sendMessage(conversationId: string, body: string): Promise
 
 // Real-time subscriptions are replaced with polling-based no-ops since there's no server
 export function subscribeToMessages(_conversationId: string, _callback: (msg: Message) => void): () => void {
+  void _conversationId;
+  void _callback;
   return () => {};
 }
 
 export function subscribeToNotifications(_callback: (notif: Notification) => void): () => void {
+  void _callback;
   return () => {};
 }
 
@@ -218,7 +222,12 @@ export async function getAllUsers(): Promise<Profile[]> {
   const docs = await mongo.findAll<ProfileDoc>('profiles');
   return docs
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .map((d) => { const { _id, password_hash, ...p } = d as DocType & Profile & { password_hash: string }; return p as Profile; });
+    .map((d) => {
+      const profile: Record<string, unknown> = { ...d };
+      delete profile._id;
+      delete profile.password_hash;
+      return profile as unknown as Profile;
+    });
 }
 
 export async function suspendUser(userId: string): Promise<{ error: string | null }> {

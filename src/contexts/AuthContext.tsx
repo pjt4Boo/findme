@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
-import { authSignIn, authSignUp, saveSession, clearSession, getSessionUserId, getProfileById, updateProfile } from '@/lib/supabase';
+import { authSignIn, authSignUp, saveSession, clearSession, getSessionUserId, getProfileById } from '@/lib/supabase';
 import type { Profile, Language } from '@/types';
 import { translate, type TranslationKey } from '@/lib/i18n';
 

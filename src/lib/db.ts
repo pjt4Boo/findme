@@ -1,4 +1,4 @@
-import type { Profile, Case, CaseLocation, CasePhoto, CaseMatch, Notification, Conversation, ConversationParticipant, Message, Report, AuditLog, Consent, NearbyCaseResult, AdminStats } from '@/types';
+import type { Profile, Case, CaseLocation, CasePhoto, CaseMatch, Notification, Conversation,  Message, Report, AuditLog, Consent, NearbyCaseResult, AdminStats } from '@/types';
 
 // ============ MongoDB-style document store backed by IndexedDB ============
 // MongoDB's native driver only runs on Node.js. This gives the same
@@ -235,11 +235,17 @@ async function seedData(db: IDBDatabase): Promise<void> {
 
 // ============ Auth helpers ============
 
+function stripProfileSecrets(doc: Doc & Profile & { password_hash: string }): Profile {
+  const profile: Record<string, unknown> = { ...doc };
+  delete profile._id;
+  delete profile.password_hash;
+  return profile as unknown as Profile;
+}
+
 export async function authSignIn(email: string, password: string): Promise<{ profile: Profile | null; error: string | null }> {
   const doc = await findOne<Doc & Profile & { password_hash: string }>('profiles', { email, password_hash: password } as Partial<Doc & Profile & { password_hash: string }>);
   if (!doc) return { profile: null, error: 'Invalid email or password.' };
-  const { _id, password_hash, ...profile } = doc;
-  return { profile: profile as Profile, error: null };
+  return { profile: stripProfileSecrets(doc), error: null };
 }
 
 export async function authSignUp(email: string, password: string, fullName: string): Promise<{ profile: Profile | null; error: string | null }> {
@@ -252,8 +258,7 @@ export async function authSignUp(email: string, password: string, fullName: stri
     avatar_url: null, preferred_language: 'en', default_radius_km: 10, created_at: nowiso, updated_at: nowiso,
   } as Doc & Profile & { password_hash: string };
   await insertOne('profiles', doc);
-  const { _id: _, password_hash: __, ...profile } = doc;
-  return { profile: profile as Profile, error: null };
+  return { profile: stripProfileSecrets(doc), error: null };
 }
 
 // ============ Photo blob storage ============
@@ -292,15 +297,13 @@ export function getSessionUserId(): string | null {
 export async function getProfileById(id: string): Promise<Profile | null> {
   const doc = await findOne<Doc & Profile>('profiles', { _id: id });
   if (!doc) return null;
-  const { _id, password_hash, ...profile } = doc as Doc & Profile & { password_hash: string };
-  return profile as Profile;
+  return stripProfileSecrets(doc as Doc & Profile & { password_hash: string });
 }
 
 export async function updateProfile(id: string, updates: Partial<Profile>): Promise<Profile | null> {
   const updated = await updateById<Doc & Profile>('profiles', id, updates as Partial<Doc & Profile>);
   if (!updated) return null;
-  const { _id, password_hash, ...profile } = updated as Doc & Profile & { password_hash: string };
-  return profile as Profile;
+  return stripProfileSecrets(updated as Doc & Profile & { password_hash: string });
 }
 
 // ============ Exported collection helpers for services ============
