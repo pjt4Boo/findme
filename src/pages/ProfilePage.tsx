@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { User, Mail, Globe, Save, Check } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoadingState } from '@/components/States';
-import { supabase } from '@/lib/supabase';
+import { updateProfile } from '@/lib/supabase';
 import type { Language, RadiusOption } from '@/types';
 import { RADIUS_OPTIONS } from '@/lib/constants';
 
@@ -28,18 +28,15 @@ export function ProfilePage() {
     e.preventDefault();
     setSaving(true);
     setSaved(false);
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        full_name: fullName,
-        phone: phone || null,
-        default_radius_km: preferredRadius,
-        preferred_language: preferredLanguage,
-      })
-      .eq('id', user!.id);
+    const updated = await updateProfile(user!.id, {
+      full_name: fullName,
+      phone: phone || null,
+      default_radius_km: preferredRadius,
+      preferred_language: preferredLanguage,
+    });
 
     setSaving(false);
-    if (!error) {
+    if (updated) {
       setSaved(true);
       setLanguage(preferredLanguage);
       await refreshProfile();

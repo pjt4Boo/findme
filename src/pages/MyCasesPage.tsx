@@ -4,10 +4,9 @@ import { Plus, FileText } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { CaseStatusBadge } from '@/components/CaseStatusBadge';
 import { LoadingState, EmptyState } from '@/components/States';
-import { getMyCases, getPhotoUrl } from '@/services/caseService';
+import { getMyCases, getPrimaryPhotoForCase } from '@/services/caseService';
 import { GENDER_LABELS } from '@/lib/constants';
-import type { Case, CasePhoto } from '@/types';
-import { supabase } from '@/lib/supabase';
+import type { Case } from '@/types';
 
 export function MyCasesPage() {
   const { t } = useAuth();
@@ -21,18 +20,8 @@ export function MyCasesPage() {
       setLoading(false);
       // Fetch primary photos
       const photoPromises = data.map(async (c) => {
-        const { data: photos } = await supabase
-          .from('case_photos')
-          .select('*')
-          .eq('case_id', c.id)
-          .eq('is_primary', true)
-          .is('deleted_at', null)
-          .limit(1);
-        if (photos && photos.length > 0) {
-          const photo = photos[0] as CasePhoto;
-          const url = await getPhotoUrl(photo.storage_key);
-          if (url) setPhotoMap((prev) => ({ ...prev, [c.id]: url }));
-        }
+        const url = await getPrimaryPhotoForCase(c.id);
+        if (url) setPhotoMap((prev) => ({ ...prev, [c.id]: url }));
       });
       await Promise.all(photoPromises);
     });

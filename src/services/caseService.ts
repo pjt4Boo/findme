@@ -1,5 +1,10 @@
-import { supabase, STORAGE_BUCKET } from '@/lib/supabase';
+import { mongo, savePhotoBlob, getPhotoBlob, haversineKm, getSessionUserId } from '@/lib/supabase';
 import type { Case, CasePhoto, CaseLocation, NearbyCaseResult, RadiusOption, CaseType } from '@/types';
+import type { Doc as DocType } from '@/lib/db';
+
+type CaseDoc = DocType & Case;
+type PhotoDoc = DocType & CasePhoto;
+type LocationDoc = DocType & CaseLocation;
 
 export async function createCase(
   data: Omit<Case, 'id' | 'created_by' | 'created_at' | 'updated_at' | 'closed_at' | 'status'>,
@@ -7,89 +12,70 @@ export async function createCase(
   consentAgreed: boolean,
   photoFile?: File | null,
 ): Promise<{ case: Case | null; error: string | null }> {
-  const { data: caseData, error } = await supabase
-    .from('cases')
-    .insert({
-      ...data,
-      status: 'PENDING_REVIEW',
-    })
-    .select()
-    .single();
+  const userId = getSessionUserId();
+  if (!userId) return { case: null, error: 'You must be signed in.' };
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const caseDoc: CaseDoc = {
+    ...data,
+    _id: id, id, status: 'PENDING_REVIEW', created_by: userId,
+    created_at: now, updated_at: now, closed_at: null,
+  };
+  await mongo.insertOne('cases', caseDoc);
 
-  if (error) return { case: null, error: error.message };
-
-  const newCase = caseData as Case;
-
-  // Insert location
-  const { error: locError } = await supabase.from('case_locations').insert({
-    case_id: newCase.id,
-    latitude: location.latitude,
-    longitude: location.longitude,
-    location_type: location.location_type,
-    accuracy_m: location.accuracy_m ?? null,
+  await mongo.insertOne<LocationDoc>('case_locations', {
+    _id: crypto.randomUUID(), id: crypto.randomUUID(),
+    case_id: id, latitude: location.latitude, longitude: location.longitude,
+    location_type: location.location_type as CaseLocation['location_type'], accuracy_m: location.accuracy_m ?? null,
+    created_at: now,
   });
 
-  if (locError) return { case: null, error: locError.message };
-
-  // Upload photo if provided
   if (photoFile) {
-    const fileExt = photoFile.name.split('.').pop();
-    const fileName = `${newCase.id}/${Date.now()}.${fileExt}`;
-    const { error: uploadError } = await supabase.storage
-      .from(STORAGE_BUCKET)
-      .upload(fileName, photoFile, { contentType: photoFile.type });
-
-    if (uploadError) return { case: null, error: uploadError.message };
-
-    await supabase.from('case_photos').insert({
-      case_id: newCase.id,
-      storage_key: fileName,
-      file_type: photoFile.type,
-      file_size: photoFile.size,
-      is_primary: true,
+    const storageKey = `${id}/${Date.now()}.${photoFile.name.split('.').pop()}`;
+    await savePhotoBlob(storageKey, photoFile);
+    await mongo.insertOne<PhotoDoc>('case_photos', {
+      _id: crypto.randomUUID(), id: crypto.randomUUID(),
+      case_id: id, storage_key: storageKey, file_type: photoFile.type,
+      file_size: photoFile.size, is_primary: true, created_at: now, deleted_at: null,
     });
   }
 
-  // Record consent
-  await supabase.from('consents').insert({
-    case_id: newCase.id,
+  await mongo.insertOne<DocType & { user_id: string; case_id: string; consent_type: string; consent_text: string; agreed: boolean }>('consents', {
+    _id: crypto.randomUUID(), user_id: userId, case_id: id,
     consent_type: 'CASE_SUBMISSION',
     consent_text: 'I understand that this information may be reviewed and that I should not submit unnecessary private information.',
-    agreed: consentAgreed,
+    agreed: consentAgreed, created_at: now,
   });
 
-  return { case: newCase, error: null };
+  const { _id, ...result } = caseDoc;
+  return { case: result as Case, error: null };
 }
 
 export async function getCaseById(id: string): Promise<Case | null> {
-  const { data, error } = await supabase.from('cases').select('*').eq('id', id).maybeSingle();
-  if (error || !data) return null;
-  return data as Case;
+  const doc = await mongo.findOne<CaseDoc>('cases', { _id: id });
+  if (!doc) return null;
+  const { _id, ...c } = doc;
+  return c as Case;
 }
 
 export async function getCasePhotos(caseId: string): Promise<CasePhoto[]> {
-  const { data } = await supabase
-    .from('case_photos')
-    .select('*')
-    .eq('case_id', caseId)
-    .is('deleted_at', null)
-    .order('is_primary', { ascending: false });
-  return (data ?? []) as CasePhoto[];
+  const docs = await mongo.findMany<PhotoDoc>('case_photos', { case_id: caseId });
+  return docs
+    .filter((d) => !d.deleted_at)
+    .sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0))
+    .map((d) => { const { _id, ...p } = d; return p as CasePhoto; });
 }
 
 export async function getCaseLocations(caseId: string): Promise<CaseLocation[]> {
-  const { data } = await supabase
-    .from('case_locations')
-    .select('*')
-    .eq('case_id', caseId)
-    .neq('location_type', 'EXACT_INTERNAL')
-    .order('created_at', { ascending: false });
-  return (data ?? []) as CaseLocation[];
+  const docs = await mongo.findMany<LocationDoc>('case_locations', { case_id: caseId });
+  return docs
+    .filter((d) => d.location_type !== 'EXACT_INTERNAL')
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .map((d) => { const { _id, ...l } = d; return l as CaseLocation; });
 }
 
 export async function getPhotoUrl(storageKey: string): Promise<string | null> {
-  const { data } = await supabase.storage.from(STORAGE_BUCKET).getPublicUrl(storageKey);
-  return data?.publicUrl ?? null;
+  return getPhotoBlob(storageKey);
 }
 
 export async function findNearbyCases(
@@ -98,32 +84,64 @@ export async function findNearbyCases(
   radiusKm: RadiusOption,
   caseType?: CaseType,
 ): Promise<NearbyCaseResult[]> {
-  const { data, error } = await supabase.rpc('find_nearby_cases', {
-    p_lat: lat,
-    p_lng: lng,
-    p_radius_km: radiusKm,
-    p_case_type: caseType ?? null,
-  });
+  const allCases = await mongo.findAll<CaseDoc>('cases');
+  const allLocations = await mongo.findAll<LocationDoc>('case_locations');
+  const allPhotos = await mongo.findAll<PhotoDoc>('case_photos');
 
-  if (error || !data) return [];
-  return data as NearbyCaseResult[];
+  const locByCase = new Map<string, LocationDoc>();
+  for (const loc of allLocations) {
+    if (!locByCase.has(loc.case_id)) locByCase.set(loc.case_id, loc);
+  }
+
+  const photoByCase = new Map<string, string>();
+  for (const p of allPhotos) {
+    if (p.is_primary && !p.deleted_at && !photoByCase.has(p.case_id)) {
+      photoByCase.set(p.case_id, p.storage_key);
+    }
+  }
+
+  const results: NearbyCaseResult[] = [];
+  for (const c of allCases) {
+    if (c.status !== 'ACTIVE') continue;
+    if (caseType && c.case_type !== caseType) continue;
+    const loc = locByCase.get(c.id);
+    if (!loc) continue;
+    const dist = haversineKm(lat, lng, loc.latitude, loc.longitude);
+    if (dist > radiusKm) continue;
+    const { _id, created_by, location_visibility, updated_at, closed_at, police_reference, additional_info, is_child, ...rest } = c;
+    results.push({
+      ...rest,
+      is_child: c.is_child,
+      distance_km: dist,
+      primary_photo_key: photoByCase.get(c.id) ?? null,
+    });
+  }
+
+  return results.sort((a, b) => a.distance_km - b.distance_km);
 }
 
 export async function getMyCases(): Promise<Case[]> {
-  const { data, error } = await supabase
-    .from('cases')
-    .select('*')
-    .order('created_at', { ascending: false });
-  if (error || !data) return [];
-  return data as Case[];
+  const userId = getSessionUserId();
+  if (!userId) return [];
+  const docs = await mongo.findMany<CaseDoc>('cases', { created_by: userId });
+  return docs
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .map((d) => { const { _id, ...c } = d; return c as Case; });
 }
 
 export async function updateCaseStatus(
   caseId: string,
   status: Case['status'],
 ): Promise<{ error: string | null }> {
-  const { error } = await supabase.from('cases').update({ status }).eq('id', caseId);
-  return { error: error?.message ?? null };
+  await mongo.updateById<CaseDoc>('cases', caseId, { status } as Partial<CaseDoc>);
+  return { error: null };
+}
+
+export async function getPrimaryPhotoForCase(caseId: string): Promise<string | null> {
+  const photos = await getCasePhotos(caseId);
+  const primary = photos.find((p) => p.is_primary) ?? photos[0];
+  if (!primary) return null;
+  return getPhotoUrl(primary.storage_key);
 }
 
 export function formatDistance(km: number): string {

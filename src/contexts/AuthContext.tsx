@@ -1,12 +1,16 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
-import type { Session, User } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
+import { authSignIn, authSignUp, saveSession, clearSession, getSessionUserId, getProfileById, updateProfile } from '@/lib/supabase';
 import type { Profile, Language } from '@/types';
 import { translate, type TranslationKey } from '@/lib/i18n';
 
+interface LocalUser {
+  id: string;
+  email: string;
+}
+
 interface AuthContextValue {
-  session: Session | null;
-  user: User | null;
+  session: { user: LocalUser } | null;
+  user: LocalUser | null;
   profile: Profile | null;
   loading: boolean;
   language: Language;
@@ -21,8 +25,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<LocalUser | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [language, setLanguageState] = useState<Language>(() => {
@@ -30,50 +33,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const fetchProfile = useCallback(async (userId: string) => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle();
-    if (error) {
-      console.error('Error fetching profile:', error);
-      return;
-    }
-    if (data) {
-      setProfile(data as Profile);
-      if (data.preferred_language) {
-        setLanguageState(data.preferred_language);
+    const p = await getProfileById(userId);
+    if (p) {
+      setProfile(p);
+      if (p.preferred_language) {
+        setLanguageState(p.preferred_language as Language);
       }
     }
   }, []);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchProfile(session.user.id);
-      }
+    const userId = getSessionUserId();
+    if (userId) {
+      getProfileById(userId).then((p) => {
+        if (p) {
+          setUser({ id: p.id, email: p.email });
+          setProfile(p);
+          if (p.preferred_language) setLanguageState(p.preferred_language as Language);
+        }
+        setLoading(false);
+      });
+    } else {
       setLoading(false);
-    });
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        (async () => {
-          await fetchProfile(session.user.id);
-        })();
-      } else {
-        setProfile(null);
-      }
-      setLoading(false);
-    });
-
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
-  }, [fetchProfile]);
+    }
+  }, []);
 
   const setLanguage = useCallback((lang: Language) => {
     setLanguageState(lang);
@@ -83,26 +66,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const t = useCallback((key: TranslationKey) => translate(language, key), [language]);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    const {data, error } = await supabase.auth.signInWithPassword({ email, password });
-console.log("DATA:", data);
-console.log("ERROR:", error);
-    return { error: error?.message ?? null };
+    const { profile: p, error } = await authSignIn(email, password);
+    if (error) return { error };
+    if (p) {
+      saveSession(p.id);
+      setUser({ id: p.id, email: p.email });
+      setProfile(p);
+      if (p.preferred_language) setLanguageState(p.preferred_language as Language);
+    }
+    return { error: null };
   }, []);
 
   const signUp = useCallback(async (email: string, password: string, fullName: string) => {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { full_name: fullName } },
-    });
-    return { error: error?.message ?? null };
+    const { profile: p, error } = await authSignUp(email, password, fullName);
+    if (error) return { error };
+    if (p) {
+      saveSession(p.id);
+      setUser({ id: p.id, email: p.email });
+      setProfile(p);
+    }
+    return { error: null };
   }, []);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
-    setProfile(null);
-    setSession(null);
+    clearSession();
     setUser(null);
+    setProfile(null);
   }, []);
 
   const refreshProfile = useCallback(async () => {
@@ -113,7 +102,7 @@ console.log("ERROR:", error);
 
   return (
     <AuthContext.Provider
-      value={{ session, user, profile, loading, language, setLanguage, t, signIn, signUp, signOut, refreshProfile }}
+      value={{ session: user ? { user } : null, user, profile, loading, language, setLanguage, t, signIn, signUp, signOut, refreshProfile }}
     >
       {children}
     </AuthContext.Provider>
